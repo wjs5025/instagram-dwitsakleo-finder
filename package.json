@@ -1,0 +1,14 @@
+{
+  "name": "instagram-dwitsakleo-finder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "뒷삭러 찾기 for Instagram - 내 인스타그램 팔로잉 중 맞팔 안 하는 사람 찾기",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "playwright": "^1.63.0"
+  }
+}

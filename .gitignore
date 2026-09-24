@@ -1,0 +1,5 @@
+node_modules/
+.chrome-profile/
+.auth-state.json
+data/
+.DS_Store

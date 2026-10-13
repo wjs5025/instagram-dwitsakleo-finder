@@ -83,13 +83,25 @@ async function extractRows(dialog, users) {
   }
 }
 
-async function collectFromModal(page, textPattern, onProgress) {
+// Parses header counts like "315", "1,234", "1.2만", "3.4K".
+function parseCount(raw) {
+  const m = raw?.match(/([\d.,]+)\s*([만천KkMm])?/);
+  if (!m) return null;
+  const n = parseFloat(m[1].replace(/,/g, ''));
+  if (Number.isNaN(n)) return null;
+  const unit = { '만': 1e4, '천': 1e3, K: 1e3, k: 1e3, M: 1e6, m: 1e6 }[m[2]] ?? 1;
+  return Math.round(n * unit);
+}
+
+async function collectFromModal(page, textPattern, countPattern, onProgress) {
   const headerScope = (await page.locator('header').count().catch(() => 0)) ? page.locator('header') : page;
   const trigger = headerScope.getByText(textPattern).first();
   if (!(await trigger.count().catch(() => 0))) {
     await dumpDebug(page, `no-trigger-${Date.now()}`);
     throw Error(`목록 버튼을 찾지 못했습니다 (패턴: ${textPattern}, url: ${page.url()})`);
   }
+  const headerText = await headerScope.innerText().catch(() => '');
+  const expected = parseCount(headerText.match(countPattern)?.[1]);
   await trigger.click({ timeout: 8000 }).catch(async () => { await trigger.click({ timeout: 8000, force: true }); });
   const dialog = page.locator('div[role="dialog"]').last();
   try { await dialog.waitFor({ timeout: 15000 }); }
@@ -106,14 +118,20 @@ async function collectFromModal(page, textPattern, onProgress) {
   const cx = box ? box.x + box.width / 2 : 400;
   const cy = box ? box.y + box.height / 2 : 400;
 
+  // The header count can disagree with what the popup actually serves (deleted or
+  // restricted accounts, count lag), and the popup may append "suggested" rows after
+  // the real list, so don't rely on growth alone: stop at the header count, after a
+  // stall, or after a hard time cap.
+  const deadline = Date.now() + 8 * 60 * 1000;
   let stall = 0;
-  for (let i = 0; i < 4000 && stall < 15; i++) {
+  for (let i = 0; i < 4000 && stall < 10 && Date.now() < deadline; i++) {
+    if (expected && users.size >= expected) break;
     const before = users.size;
     await page.mouse.move(cx, cy);
     await page.mouse.wheel(0, rand(400, 800));
     await delay(rand(500, 1000));
     await extractRows(dialog, users);
-    if (users.size === before) {
+    if (users.size === before && !(expected && users.size >= expected)) {
       await delay(rand(1200, 2200));
       await extractRows(dialog, users);
     }
@@ -132,9 +150,9 @@ export async function runSync(page, onProgress) {
   await gotoAndSettle(page, `https://www.instagram.com/${encodeURIComponent(username)}/`);
   await dismissInterstitial(page);
 
-  const followers = await collectFromModal(page, /팔로워|[Ff]ollowers/, count => onProgress?.('followers', count));
+  const followers = await collectFromModal(page, /팔로워|[Ff]ollowers/, /(?:팔로워|[Ff]ollowers)\s*([\d.,]+\s*[만천KkMm]?)/, count => onProgress?.('followers', count));
   await delay(rand(1500, 3000));
-  const following = await collectFromModal(page, /팔로잉|팔로우\s*\d|[Ff]ollowing/, count => onProgress?.('following', count));
+  const following = await collectFromModal(page, /팔로잉|팔로우\s*\d|[Ff]ollowing/, /(?:팔로잉|팔로우|[Ff]ollowing)\s*([\d.,]+\s*[만천KkMm]?)/, count => onProgress?.('following', count));
 
   const followerNames = new Set(followers.map(u => u.username));
   const notFollowingBack = following
